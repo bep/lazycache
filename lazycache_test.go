@@ -120,7 +120,7 @@ func TestGetOrCreateConcurrent(t *testing.T) {
 func BenchmarkGetOrCreate(b *testing.B) {
 	const maxSize = 1000
 
-	runBenchmark := func(b *testing.B, cache *LazyCache, getOrCreate func(key any, create func(key any) (any, error)) Entry) {
+	runBenchmark := func(b *testing.B, cache *Cache, getOrCreate func(key any, create func(key any) (any, error)) Entry) {
 		r := rand.New(rand.NewSource(99))
 		var mu sync.Mutex
 
@@ -241,7 +241,7 @@ func BenchmarkCacheParallel(b *testing.B) {
 
 // These are only used in benchmarks.
 // This should be functionally equivalent to GetOrCreate.
-func (c *LazyCache) getOrCreateBaselineLock(key any, create func(key any) (any, error)) Entry {
+func (c *Cache) getOrCreateBaselineLock(key any, create func(key any) (any, error)) Entry {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	v, ok := c.lru.Get(key)
@@ -263,7 +263,7 @@ func (c *LazyCache) getOrCreateBaselineLock(key any, create func(key any) (any, 
 }
 
 // This variant does not hold any lock while calling create, which means it may be called multiple times for the same key.
-func (c *LazyCache) getOrCreateBaselDoubleCheckedLock(key any, create func(key any) (any, error)) Entry {
+func (c *Cache) getOrCreateBaselDoubleCheckedLock(key any, create func(key any) (any, error)) Entry {
 	c.mu.Lock()
 	v, ok := c.lru.Get(key)
 	if ok {

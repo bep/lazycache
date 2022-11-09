@@ -8,13 +8,13 @@ import (
 
 var _ = Entry(&delayedEntry{})
 
-// New creates a new LazyCache.
-func New(options CacheOptions) *LazyCache {
+// New creates a new Cache.
+func New(options CacheOptions) *Cache {
 	lru, err := simplelru.NewLRU(int(options.MaxEntries), nil)
 	if err != nil {
 		panic(err)
 	}
-	c := &LazyCache{
+	c := &Cache{
 		lru: lru,
 	}
 	return c
@@ -33,13 +33,13 @@ type Entry interface {
 	Err() error
 }
 
-type LazyCache struct {
+type Cache struct {
 	lru *simplelru.LRU
 	mu  sync.RWMutex
 }
 
 // Contains returns true if the given key is in the cache.
-func (c *LazyCache) Contains(key any) bool {
+func (c *Cache) Contains(key any) bool {
 	c.mu.RLock()
 	b := c.lru.Contains(key)
 	c.mu.RUnlock()
@@ -48,14 +48,14 @@ func (c *LazyCache) Contains(key any) bool {
 
 // Delete deletes the item with given key from the cache, returning if the
 // key was contained.
-func (c *LazyCache) Delete(key any) bool {
+func (c *Cache) Delete(key any) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.lru.Remove(key)
 }
 
 // DeleteFunc deletes all entries for which the given function returns true.
-func (c *LazyCache) DeleteFunc(matches func(key any, item Entry) bool) int {
+func (c *Cache) DeleteFunc(matches func(key any, item Entry) bool) int {
 	c.mu.RLock()
 	keys := c.lru.Keys()
 
@@ -81,21 +81,21 @@ func (c *LazyCache) DeleteFunc(matches func(key any, item Entry) bool) int {
 }
 
 // Keys returns a slice of the keys in the cache, oldest first.
-func (c *LazyCache) Keys() []any {
+func (c *Cache) Keys() []any {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.lru.Keys()
 }
 
 // Len returns the number of items in the cache.
-func (c *LazyCache) Len() int {
+func (c *Cache) Len() int {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.lru.Len()
 }
 
 // Get returns the value associated with key.
-func (c *LazyCache) Get(key any) Entry {
+func (c *Cache) Get(key any) Entry {
 	c.mu.Lock()
 	v, ok := c.lru.Get(key)
 	c.mu.Unlock()
@@ -109,7 +109,7 @@ func (c *LazyCache) Get(key any) Entry {
 // Note that create, the cache prime function, is called once and then not called again for a given key
 // unless the cache entry is evicted; it does not block other goroutines from calling GetOrCreate,
 // it is not called with the cache lock held.
-func (c *LazyCache) GetOrCreate(key any, create func(key any) (any, error)) Entry {
+func (c *Cache) GetOrCreate(key any, create func(key any) (any, error)) Entry {
 	c.mu.Lock()
 	v, ok := c.lru.Get(key)
 	if ok {
@@ -138,7 +138,7 @@ func (c *LazyCache) GetOrCreate(key any, create func(key any) (any, error)) Entr
 }
 
 // Resize changes the cache size and returns the number of entries evicted.
-func (c *LazyCache) Resize(size int) (evicted int) {
+func (c *Cache) Resize(size int) (evicted int) {
 	c.mu.Lock()
 	evicted = c.lru.Resize(size)
 	c.mu.Unlock()
@@ -146,7 +146,7 @@ func (c *LazyCache) Resize(size int) (evicted int) {
 }
 
 // Set associates value with key.
-func (c *LazyCache) Set(key, value any) {
+func (c *Cache) Set(key, value any) {
 	c.mu.Lock()
 	if _, ok := value.(Entry); !ok {
 		value = entry{

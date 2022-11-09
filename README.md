@@ -5,7 +5,7 @@
 
 **Note:** This is still a work in progress and the API will most likely change.
 
-**Lazycache** is a simple thread safe in-memory LRU cache. Under the hood it leverages the great [simpleru package in golang-lru](https://github.com/hashicorp/golang-lru), with its exellent performance. One big difference between `golang-lru` and this library is the [GetOrCreate](https://pkg.go.dev/github.com/bep/lazycache#LazyCache.GetOrCreate) method, which provides: 
+**Lazycache** is a simple thread safe in-memory LRU cache. Under the hood it leverages the great [simpleru package in golang-lru](https://github.com/hashicorp/golang-lru), with its exellent performance. One big difference between `golang-lru` and this library is the [GetOrCreate](https://pkg.go.dev/github.com/bep/lazycache#Cache.GetOrCreate) method, which provides: 
 
 * Non-blocking cache priming on cache misses. 
 * A guarantee that the prime function is only called once for a given key.
@@ -13,6 +13,6 @@
 
 Other notable features:
 
-* The cache can be [resized](https://pkg.go.dev/github.com/bep/lazycache#LazyCache.Resize) while running.
+* The cache can be [resized](https://pkg.go.dev/github.com/bep/lazycache#Cache.Resize) while running.
 * When the number of entries overflows the defined cache size, the least recently used item gets discarded (LRU).
 
