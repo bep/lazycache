@@ -3,8 +3,8 @@ module github.com/bep/lazycache
 go 1.18
 
 require (
+	github.com/bep/golang-lru/v2 v2.0.0-20221109181639-7772c2d8d424
 	github.com/frankban/quicktest v1.14.2
-	github.com/hashicorp/golang-lru v0.5.4
 )
 
 require (
