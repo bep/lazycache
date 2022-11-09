@@ -223,13 +223,16 @@ func BenchmarkCacheParallel(b *testing.B) {
 	b.Run("Get", func(b *testing.B) {
 		cache := New(CacheOptions{MaxEntries: maxSize})
 		r := rand.New(rand.NewSource(99))
+		var mu sync.Mutex
 		numItems := maxSize - 200
 		for i := 0; i < numItems; i++ {
 			cache.Set(i, i)
 		}
 		b.RunParallel(func(pb *testing.PB) {
 			for pb.Next() {
+				mu.Lock()
 				key := r.Intn(numItems)
+				mu.Unlock()
 				v := cache.Get(key)
 				if v == nil {
 					b.Fatalf("unexpected nil value for key %d", key)
