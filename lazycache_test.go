@@ -162,7 +162,7 @@ func BenchmarkGetOrCreate(b *testing.B) {
 		})
 	}
 
-	b.Run("BaselineLock", func(b *testing.B) {
+	/*b.Run("BaselineLock", func(b *testing.B) {
 		cache := New(CacheOptions{MaxEntries: maxSize})
 		runBenchmark(b, cache, cache.getOrCreateBaselineLock)
 	})
@@ -170,7 +170,7 @@ func BenchmarkGetOrCreate(b *testing.B) {
 	b.Run("BaselineDoubleCheckedLocking", func(b *testing.B) {
 		cache := New(CacheOptions{MaxEntries: maxSize})
 		runBenchmark(b, cache, cache.getOrCreateBaselDoubleCheckedLock)
-	})
+	})*/
 
 	b.Run("Real", func(b *testing.B) {
 		cache := New(CacheOptions{MaxEntries: maxSize})
