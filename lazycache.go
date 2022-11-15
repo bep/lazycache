@@ -3,7 +3,7 @@ package lazycache
 import (
 	"sync"
 
-	"github.com/bep/golang-lru/v2/simplelru"
+	"github.com/hashicorp/golang-lru/v2/simplelru"
 )
 
 // New creates a new Cache.
