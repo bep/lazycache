@@ -87,7 +87,7 @@ func TestDeleteFunc(t *testing.T) {
 			go func() {
 				defer wg.Done()
 				for i := 10; i < 30; i++ {
-					v, _, err := cache.GetOrCreate(i, func(key int) (any, error) {
+					v, err := cache.GetOrCreate(i, func(key int) (any, error) {
 						if key%2 == 0 {
 							return nil, errors.New("failed")
 						}
@@ -124,8 +124,7 @@ func TestGetOrCreate(t *testing.T) {
 		return fmt.Sprintf("value-%d-%d", key, counter), nil
 	}
 	for i := 0; i < 3; i++ {
-		res, found, err := cache.GetOrCreate(123456, create)
-		c.Assert(found, qt.IsTrue, qt.Commentf("iteration %d", i))
+		res, err := cache.GetOrCreate(123456, create)
 		c.Assert(err, qt.IsNil)
 		c.Assert(res, qt.Equals, "value-123456-1")
 	}
@@ -141,8 +140,7 @@ func TestGetOrCreateError(t *testing.T) {
 		return nil, fmt.Errorf("failed")
 	}
 
-	res, found, err := cache.GetOrCreate(123456, create)
-	c.Assert(found, qt.IsFalse)
+	res, err := cache.GetOrCreate(123456, create)
 	c.Assert(err, qt.ErrorMatches, "failed")
 	c.Assert(res, qt.IsNil)
 
@@ -173,8 +171,7 @@ func TestGetOrCreateConcurrent(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			for j := 0; j < 12; j++ {
-				res, found, err := cache.GetOrCreate(i, create)
-				c.Assert(found, qt.IsTrue)
+				res, err := cache.GetOrCreate(i, create)
 				c.Assert(err, qt.IsNil)
 				c.Assert(res, qt.Equals, expect)
 			}
@@ -224,11 +221,11 @@ func TestGetOrCreateRecursive(t *testing.T) {
 						key2++
 					}
 					shouldFail := key1%10 == 0
-					v, found, err := cache.GetOrCreate(key1, func(key int) (any, error) {
+					v, err := cache.GetOrCreate(key1, func(key int) (any, error) {
 						if shouldFail {
 							return nil, fmt.Errorf("failed")
 						}
-						v, _, err := cache.GetOrCreate(key2, func(key int) (any, error) {
+						v, err := cache.GetOrCreate(key2, func(key int) (any, error) {
 							return "inner", nil
 						})
 						c.Assert(err, qt.IsNil)
@@ -238,10 +235,8 @@ func TestGetOrCreateRecursive(t *testing.T) {
 					if shouldFail {
 						c.Assert(err, qt.ErrorMatches, "failed")
 						c.Assert(v, qt.IsNil)
-						c.Assert(found, qt.IsFalse)
 					} else {
 						c.Assert(err, qt.IsNil)
-						c.Assert(found, qt.IsTrue)
 						c.Assert(v, qt.Equals, "inner")
 					}
 				}
@@ -255,48 +250,44 @@ func TestGetOrCreateRecursive(t *testing.T) {
 func BenchmarkGetOrCreateAndGet(b *testing.B) {
 	const maxSize = 1000
 
-	runBenchmark := func(b *testing.B, cache *Cache[int, any], getOrCreate func(key int, create func(key int) (any, error)) (any, bool, error)) {
-		r := rand.New(rand.NewSource(99))
-		var mu sync.Mutex
-
-		b.RunParallel(func(pb *testing.PB) {
-			// Partially fill the cache.
-			for i := 0; i < maxSize/2; i++ {
-				cache.Set(i, i)
-			}
-			b.ResetTimer()
-			for pb.Next() {
-				mu.Lock()
-				i1, i2 := r.Intn(maxSize), r.Intn(maxSize)
-				mu.Unlock()
-				// Just Get the value.
-				v, found := cache.Get(i1)
-				if found && v != i1 {
-					b.Fatalf("got %v, want %v", v, i1)
-				}
-
-				res2, found, err := getOrCreate(i2, func(key int) (any, error) {
-					if i2%100 == 0 {
-						// Simulate a slow create.
-						time.Sleep(1 * time.Second)
-					}
-					return i2, nil
-				})
-
-				if err != nil {
-					b.Fatal(err)
-				}
-
-				if v := res2; !found || v != i2 {
-					b.Fatalf("got %v, want %v", v, i2)
-				}
-			}
-		})
+	cache := New[int, any](Options{MaxEntries: maxSize})
+	r := rand.New(rand.NewSource(99))
+	var mu sync.Mutex
+	// Partially fill the cache.
+	for i := 0; i < maxSize/2; i++ {
+		cache.Set(i, i)
 	}
+	b.ResetTimer()
 
-	b.Run("Real", func(b *testing.B) {
-		cache := New[int, any](Options{MaxEntries: maxSize})
-		runBenchmark(b, cache, cache.GetOrCreate)
+	b.RunParallel(func(pb *testing.PB) {
+
+		b.ResetTimer()
+		for pb.Next() {
+			mu.Lock()
+			i1, i2 := r.Intn(maxSize), r.Intn(maxSize)
+			mu.Unlock()
+			// Just Get the value.
+			v, found := cache.Get(i1)
+			if found && v != i1 {
+				b.Fatalf("got %v, want %v", v, i1)
+			}
+
+			res2, err := cache.GetOrCreate(i2, func(key int) (any, error) {
+				if i2%100 == 0 {
+					// Simulate a slow create.
+					time.Sleep(1 * time.Second)
+				}
+				return i2, nil
+			})
+
+			if err != nil {
+				b.Fatal(err)
+			}
+
+			if v := res2; !found || v != i2 {
+				b.Fatalf("got %v, want %v", v, i2)
+			}
+		}
 	})
 
 }
@@ -318,23 +309,23 @@ func BenchmarkGetOrCreate(b *testing.B) {
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
 			mu.Lock()
-			i2 := r.Intn(maxSize)
+			key := r.Intn(maxSize)
 			mu.Unlock()
 
-			res2, found, err := cache.GetOrCreate(i2, func(key int) (any, error) {
-				if i2%100 == 0 {
+			v, err := cache.GetOrCreate(key, func(int) (any, error) {
+				if key%100 == 0 {
 					// Simulate a slow create.
 					time.Sleep(1 * time.Second)
 				}
-				return i2, nil
+				return key, nil
 			})
 
 			if err != nil {
 				b.Fatal(err)
 			}
 
-			if v := res2; !found || v != i2 {
-				b.Fatalf("got %v, want %v", v, i2)
+			if v != key {
+				b.Fatalf("got %v, want %v", v, key)
 			}
 		}
 	})
