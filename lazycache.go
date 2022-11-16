@@ -86,16 +86,16 @@ func (c *Cache[K, V]) Get(key K) (V, bool) {
 // Note that create, the cache prime function, is called once and then not called again for a given key
 // unless the cache entry is evicted; it does not block other goroutines from calling GetOrCreate,
 // it is not called with the cache lock held.
+// Note that any error returned by create will be returned by GetOrCreate and repeated calls with the same key will
+// receive the same error.
 func (c *Cache[K, V]) GetOrCreate(key K, create func(key K) (V, error)) (V, bool, error) {
 	c.mu.Lock()
 	w := c.get(key)
 	if w != nil {
+		c.mu.Unlock()
 		w.wait()
-		// if w.ready is set then w comes from a concurrent GetOrCreate call.
-		if w.found || w.ready != nil {
-			c.mu.Unlock()
-			return w.value, w.found, nil
-		}
+		// If w.ready is nil, we will repeat any error from the create function to concurrent callers.
+		return w.value, w.found, w.err
 	}
 
 	w = &valueWrapper[V]{

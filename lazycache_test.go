@@ -200,7 +200,59 @@ func TestGetOrCreateConcurrent(t *testing.T) {
 	wg.Wait()
 }
 
-func BenchmarkGetOrCreate(b *testing.B) {
+func TestGetOrCreateRecursive(t *testing.T) {
+	c := qt.New(t)
+
+	var wg sync.WaitGroup
+
+	n := 200
+
+	for i := 0; i < 30; i++ {
+		cache := New[int, any](Options{MaxEntries: 1000})
+
+		for j := 0; j < 10; j++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				for k := 0; k < 10; k++ {
+					// This test was added to test a deadlock situation with nested GetOrCreate calls on the same cache.
+					// Note that the keys below are carefully selected to not overlap, as this case may still deadlock:
+					// goroutine 1: GetOrCreate(1) => GetOrCreate(2)
+					// goroutine 2: GetOrCreate(2) => GetOrCreate(1)
+					key1, key2 := rand.Intn(n), rand.Intn(n)+n
+					if key2 == key1 {
+						key2++
+					}
+					shouldFail := key1%10 == 0
+					v, found, err := cache.GetOrCreate(key1, func(key int) (any, error) {
+						if shouldFail {
+							return nil, fmt.Errorf("failed")
+						}
+						v, _, err := cache.GetOrCreate(key2, func(key int) (any, error) {
+							return "inner", nil
+						})
+						c.Assert(err, qt.IsNil)
+						return v, nil
+					})
+
+					if shouldFail {
+						c.Assert(err, qt.ErrorMatches, "failed")
+						c.Assert(v, qt.IsNil)
+						c.Assert(found, qt.IsFalse)
+					} else {
+						c.Assert(err, qt.IsNil)
+						c.Assert(found, qt.IsTrue)
+						c.Assert(v, qt.Equals, "inner")
+					}
+				}
+			}()
+
+		}
+		wg.Wait()
+	}
+}
+
+func BenchmarkGetOrCreateAndGet(b *testing.B) {
 	const maxSize = 1000
 
 	runBenchmark := func(b *testing.B, cache *Cache[int, any], getOrCreate func(key int, create func(key int) (any, error)) (any, bool, error)) {
@@ -247,6 +299,45 @@ func BenchmarkGetOrCreate(b *testing.B) {
 		runBenchmark(b, cache, cache.GetOrCreate)
 	})
 
+}
+
+func BenchmarkGetOrCreate(b *testing.B) {
+	const maxSize = 1000
+
+	r := rand.New(rand.NewSource(99))
+	var mu sync.Mutex
+
+	cache := New[int, any](Options{MaxEntries: maxSize})
+
+	// Partially fill the cache.
+	for i := 0; i < maxSize/3; i++ {
+		cache.Set(i, i)
+	}
+	b.ResetTimer()
+
+	b.RunParallel(func(pb *testing.PB) {
+		for pb.Next() {
+			mu.Lock()
+			i2 := r.Intn(maxSize)
+			mu.Unlock()
+
+			res2, found, err := cache.GetOrCreate(i2, func(key int) (any, error) {
+				if i2%100 == 0 {
+					// Simulate a slow create.
+					time.Sleep(1 * time.Second)
+				}
+				return i2, nil
+			})
+
+			if err != nil {
+				b.Fatal(err)
+			}
+
+			if v := res2; !found || v != i2 {
+				b.Fatalf("got %v, want %v", v, i2)
+			}
+		}
+	})
 }
 
 func BenchmarkCacheSerial(b *testing.B) {
