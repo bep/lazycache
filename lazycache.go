@@ -88,14 +88,14 @@ func (c *Cache[K, V]) Get(key K) (V, bool) {
 // it is not called with the cache lock held.
 // Note that any error returned by create will be returned by GetOrCreate and repeated calls with the same key will
 // receive the same error.
-func (c *Cache[K, V]) GetOrCreate(key K, create func(key K) (V, error)) (V, bool, error) {
+func (c *Cache[K, V]) GetOrCreate(key K, create func(key K) (V, error)) (V, error) {
 	c.mu.Lock()
 	w := c.get(key)
 	if w != nil {
 		c.mu.Unlock()
 		w.wait()
 		// If w.ready is nil, we will repeat any error from the create function to concurrent callers.
-		return w.value, w.found, w.err
+		return w.value, w.err
 	}
 
 	w = &valueWrapper[V]{
@@ -117,9 +117,9 @@ func (c *Cache[K, V]) GetOrCreate(key K, create func(key K) (V, error)) (V, bool
 
 	if err != nil {
 		c.Delete(key)
-		return c.zerov, false, err
+		return c.zerov, err
 	}
-	return v, true, nil
+	return v, nil
 }
 
 // Resize changes the cache size and returns the number of entries evicted.
