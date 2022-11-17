@@ -284,7 +284,7 @@ func BenchmarkGetOrCreateAndGet(b *testing.B) {
 				b.Fatal(err)
 			}
 
-			if v := res2; !found || v != i2 {
+			if v := res2; v != i2 {
 				b.Fatalf("got %v, want %v", v, i2)
 			}
 		}
