@@ -87,7 +87,7 @@ func TestDeleteFunc(t *testing.T) {
 			go func() {
 				defer wg.Done()
 				for i := 10; i < 30; i++ {
-					v, err := cache.GetOrCreate(i, func(key int) (any, error) {
+					v, _, err := cache.GetOrCreate(i, func(key int) (any, error) {
 						if key%2 == 0 {
 							return nil, errors.New("failed")
 						}
@@ -124,9 +124,10 @@ func TestGetOrCreate(t *testing.T) {
 		return fmt.Sprintf("value-%d-%d", key, counter), nil
 	}
 	for i := 0; i < 3; i++ {
-		res, err := cache.GetOrCreate(123456, create)
+		res, found, err := cache.GetOrCreate(123456, create)
 		c.Assert(err, qt.IsNil)
 		c.Assert(res, qt.Equals, "value-123456-1")
+		c.Assert(found, qt.Equals, i > 0)
 	}
 	v, found := cache.Get(123456)
 	c.Assert(found, qt.IsTrue)
@@ -140,7 +141,7 @@ func TestGetOrCreateError(t *testing.T) {
 		return nil, fmt.Errorf("failed")
 	}
 
-	res, err := cache.GetOrCreate(123456, create)
+	res, _, err := cache.GetOrCreate(123456, create)
 	c.Assert(err, qt.ErrorMatches, "failed")
 	c.Assert(res, qt.IsNil)
 
@@ -171,7 +172,7 @@ func TestGetOrCreateConcurrent(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			for j := 0; j < 12; j++ {
-				res, err := cache.GetOrCreate(i, create)
+				res, _, err := cache.GetOrCreate(i, create)
 				c.Assert(err, qt.IsNil)
 				c.Assert(res, qt.Equals, expect)
 			}
@@ -221,11 +222,11 @@ func TestGetOrCreateRecursive(t *testing.T) {
 						key2++
 					}
 					shouldFail := key1%10 == 0
-					v, err := cache.GetOrCreate(key1, func(key int) (any, error) {
+					v, _, err := cache.GetOrCreate(key1, func(key int) (any, error) {
 						if shouldFail {
 							return nil, fmt.Errorf("failed")
 						}
-						v, err := cache.GetOrCreate(key2, func(key int) (any, error) {
+						v, _, err := cache.GetOrCreate(key2, func(key int) (any, error) {
 							return "inner", nil
 						})
 						c.Assert(err, qt.IsNil)
@@ -272,7 +273,7 @@ func BenchmarkGetOrCreateAndGet(b *testing.B) {
 				b.Fatalf("got %v, want %v", v, i1)
 			}
 
-			res2, err := cache.GetOrCreate(i2, func(key int) (any, error) {
+			res2, _, err := cache.GetOrCreate(i2, func(key int) (any, error) {
 				if i2%100 == 0 {
 					// Simulate a slow create.
 					time.Sleep(1 * time.Second)
@@ -312,7 +313,7 @@ func BenchmarkGetOrCreate(b *testing.B) {
 			key := r.Intn(maxSize)
 			mu.Unlock()
 
-			v, err := cache.GetOrCreate(key, func(int) (any, error) {
+			v, _, err := cache.GetOrCreate(key, func(int) (any, error) {
 				if key%100 == 0 {
 					// Simulate a slow create.
 					time.Sleep(1 * time.Second)
