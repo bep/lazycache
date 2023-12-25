@@ -4,7 +4,7 @@ go 1.18
 
 require (
 	github.com/frankban/quicktest v1.14.2
-	github.com/hashicorp/golang-lru/v2 v2.0.1
+	github.com/hashicorp/golang-lru/v2 v2.0.7
 )
 
 require (
