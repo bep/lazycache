@@ -7,8 +7,18 @@ import (
 )
 
 // New creates a new Cache.
-func New[K comparable, V any](options Options) *Cache[K, V] {
-	lru, err := simplelru.NewLRU[K, *valueWrapper[V]](int(options.MaxEntries), nil)
+func New[K comparable, V any](options Options[K, V]) *Cache[K, V] {
+	var onEvict simplelru.EvictCallback[K, *valueWrapper[V]] = nil
+	if options.OnEvict != nil {
+		onEvict = func(key K, value *valueWrapper[V]) {
+			value.wait()
+			if value.found {
+				options.OnEvict(key, value.value)
+			}
+		}
+	}
+
+	lru, err := simplelru.NewLRU[K, *valueWrapper[V]](int(options.MaxEntries), onEvict)
 	if err != nil {
 		panic(err)
 	}
@@ -19,10 +29,13 @@ func New[K comparable, V any](options Options) *Cache[K, V] {
 }
 
 // Options holds the cache options.
-type Options struct {
+type Options[K comparable, V any] struct {
 	// MaxEntries is the maximum number of entries that the cache should hold.
 	// Note that this can also be adjusted after the cache is created with Resize.
 	MaxEntries int
+
+	// OnEvict is an optional callback that is called when an entry is evicted.
+	OnEvict func(key K, value V)
 }
 
 // Cache is a thread-safe resizable LRU cache.

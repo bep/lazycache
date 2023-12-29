@@ -15,7 +15,7 @@ import (
 func TestCache(t *testing.T) {
 	c := qt.New(t)
 
-	cache := New[int, any](Options{MaxEntries: 10})
+	cache := New[int, any](Options[int, any]{MaxEntries: 10})
 
 	get := func(key int) any {
 		v, found := cache.Get(key)
@@ -54,15 +54,14 @@ func TestCache(t *testing.T) {
 
 	c.Assert(cache.len(), qt.Equals, 0)
 
-	c.Assert(func() { New[int, any](Options{MaxEntries: -1}) }, qt.PanicMatches, "must provide a positive size")
-
+	c.Assert(func() { New[int, any](Options[int, any]{MaxEntries: -1}) }, qt.PanicMatches, "must provide a positive size")
 }
 
 func TestDeleteFunc(t *testing.T) {
 	c := qt.New(t)
 
 	c.Run("Basic", func(c *qt.C) {
-		cache := New[int, any](Options{MaxEntries: 1000})
+		cache := New(Options[int, any]{MaxEntries: 1000})
 		for i := 0; i < 10; i++ {
 			cache.Set(i, i)
 		}
@@ -73,13 +72,12 @@ func TestDeleteFunc(t *testing.T) {
 	})
 
 	c.Run("Temporary", func(c *qt.C) {
-
 		var wg sync.WaitGroup
 
 		// There's some timing involved in this test, so we'll need
 		// to retry a few times to cover all the cases.
 		for i := 0; i < 100; i++ {
-			cache := New[int, any](Options{MaxEntries: 1000})
+			cache := New(Options[int, any]{MaxEntries: 1000})
 			for i := 0; i < 10; i++ {
 				cache.Set(i, i)
 			}
@@ -112,12 +110,11 @@ func TestDeleteFunc(t *testing.T) {
 
 		wg.Wait()
 	})
-
 }
 
 func TestGetOrCreate(t *testing.T) {
 	c := qt.New(t)
-	cache := New[int, any](Options{MaxEntries: 100})
+	cache := New(Options[int, any]{MaxEntries: 100})
 	counter := 0
 	create := func(key int) (any, error) {
 		counter++
@@ -136,7 +133,7 @@ func TestGetOrCreate(t *testing.T) {
 
 func TestGetOrCreateError(t *testing.T) {
 	c := qt.New(t)
-	cache := New[int, any](Options{MaxEntries: 100})
+	cache := New(Options[int, any]{MaxEntries: 100})
 	create := func(key int) (any, error) {
 		return nil, fmt.Errorf("failed")
 	}
@@ -144,13 +141,30 @@ func TestGetOrCreateError(t *testing.T) {
 	res, _, err := cache.GetOrCreate(123456, create)
 	c.Assert(err, qt.ErrorMatches, "failed")
 	c.Assert(res, qt.IsNil)
+}
 
+func TestOnEvict(t *testing.T) {
+	c := qt.New(t)
+	var onEvictCalled bool
+	cache := New(Options[int, any]{MaxEntries: 20, OnEvict: func(key int, value any) {
+		onEvictCalled = true
+	}})
+
+	create := func(key int) (any, error) {
+		return key, nil
+	}
+
+	for i := 0; i < 25; i++ {
+		cache.GetOrCreate(i, create)
+	}
+
+	c.Assert(onEvictCalled, qt.IsTrue)
 }
 
 func TestGetOrCreateConcurrent(t *testing.T) {
 	c := qt.New(t)
 
-	cache := New[int, any](Options{MaxEntries: 1000})
+	cache := New(Options[int, any]{MaxEntries: 1000})
 
 	var countersmu sync.Mutex
 	counters := make(map[int]int)
@@ -206,7 +220,7 @@ func TestGetOrCreateRecursive(t *testing.T) {
 	n := 200
 
 	for i := 0; i < 30; i++ {
-		cache := New[int, any](Options{MaxEntries: 1000})
+		cache := New(Options[int, any]{MaxEntries: 1000})
 
 		for j := 0; j < 10; j++ {
 			wg.Add(1)
@@ -251,7 +265,7 @@ func TestGetOrCreateRecursive(t *testing.T) {
 func BenchmarkGetOrCreateAndGet(b *testing.B) {
 	const maxSize = 1000
 
-	cache := New[int, any](Options{MaxEntries: maxSize})
+	cache := New(Options[int, any]{MaxEntries: maxSize})
 	r := rand.New(rand.NewSource(99))
 	var mu sync.Mutex
 	// Partially fill the cache.
@@ -261,7 +275,6 @@ func BenchmarkGetOrCreateAndGet(b *testing.B) {
 	b.ResetTimer()
 
 	b.RunParallel(func(pb *testing.PB) {
-
 		b.ResetTimer()
 		for pb.Next() {
 			mu.Lock()
@@ -280,7 +293,6 @@ func BenchmarkGetOrCreateAndGet(b *testing.B) {
 				}
 				return i2, nil
 			})
-
 			if err != nil {
 				b.Fatal(err)
 			}
@@ -290,7 +302,6 @@ func BenchmarkGetOrCreateAndGet(b *testing.B) {
 			}
 		}
 	})
-
 }
 
 func BenchmarkGetOrCreate(b *testing.B) {
@@ -299,7 +310,7 @@ func BenchmarkGetOrCreate(b *testing.B) {
 	r := rand.New(rand.NewSource(99))
 	var mu sync.Mutex
 
-	cache := New[int, any](Options{MaxEntries: maxSize})
+	cache := New(Options[int, any]{MaxEntries: maxSize})
 
 	// Partially fill the cache.
 	for i := 0; i < maxSize/3; i++ {
@@ -320,7 +331,6 @@ func BenchmarkGetOrCreate(b *testing.B) {
 				}
 				return key, nil
 			})
-
 			if err != nil {
 				b.Fatal(err)
 			}
@@ -336,14 +346,14 @@ func BenchmarkCacheSerial(b *testing.B) {
 	const maxSize = 1000
 
 	b.Run("Set", func(b *testing.B) {
-		cache := New[int, any](Options{MaxEntries: maxSize})
+		cache := New(Options[int, any]{MaxEntries: maxSize})
 		for i := 0; i < b.N; i++ {
 			cache.Set(i, i)
 		}
 	})
 
 	b.Run("Get", func(b *testing.B) {
-		cache := New[int, any](Options{MaxEntries: maxSize})
+		cache := New(Options[int, any]{MaxEntries: maxSize})
 		numItems := maxSize - 200
 		for i := 0; i < numItems; i++ {
 			cache.Set(i, i)
@@ -363,7 +373,7 @@ func BenchmarkCacheParallel(b *testing.B) {
 	const maxSize = 1000
 
 	b.Run("Set", func(b *testing.B) {
-		cache := New[int, any](Options{MaxEntries: maxSize})
+		cache := New(Options[int, any]{MaxEntries: maxSize})
 		var counter uint32
 		b.RunParallel(func(pb *testing.PB) {
 			for pb.Next() {
@@ -374,7 +384,7 @@ func BenchmarkCacheParallel(b *testing.B) {
 	})
 
 	b.Run("Get", func(b *testing.B) {
-		cache := New[int, any](Options{MaxEntries: maxSize})
+		cache := New(Options[int, any]{MaxEntries: maxSize})
 		r := rand.New(rand.NewSource(99))
 		var mu sync.Mutex
 		numItems := maxSize - 200
