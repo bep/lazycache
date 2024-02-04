@@ -212,6 +212,45 @@ func TestGetOrCreateConcurrent(t *testing.T) {
 	wg.Wait()
 }
 
+func TestGetOrCreateAndResizeConcurrent(t *testing.T) {
+	c := qt.New(t)
+
+	cache := New(Options[int, int]{MaxEntries: 1000})
+
+	var counter atomic.Uint32
+	create := func(key int) (int, error) {
+		time.Sleep(time.Duration(rand.Intn(40)+1) * time.Millisecond)
+		counter.Add(1)
+		return int(counter.Load()), nil
+	}
+
+	var wg sync.WaitGroup
+
+	for i := 0; i < 100; i++ {
+		i := i
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := 0; j < 12; j++ {
+				v, _, err := cache.GetOrCreate(i, create)
+				c.Assert(err, qt.IsNil)
+				c.Assert(v, qt.Not(qt.Equals), 0)
+			}
+		}()
+	}
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for i := 100; i >= 0; i-- {
+			cache.Resize(i)
+			time.Sleep(10 * time.Millisecond)
+		}
+	}()
+
+	wg.Wait()
+}
+
 func TestGetOrCreateRecursive(t *testing.T) {
 	c := qt.New(t)
 
