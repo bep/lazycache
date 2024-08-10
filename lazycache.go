@@ -176,9 +176,9 @@ func (c *Cache[K, V]) keys() []K {
 	return c.lru.Keys()
 }
 
-// len returns the number of items in the cache.
+// Len returns the number of items in the cache.
 // note that this wil also include values that are not yet ready.
-func (c *Cache[K, V]) len() int {
+func (c *Cache[K, V]) Len() int {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.lru.Len()
