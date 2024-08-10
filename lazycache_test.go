@@ -52,7 +52,7 @@ func TestCache(t *testing.T) {
 	c.Assert(cache.Delete(15), qt.IsFalse)
 	c.Assert(cache.contains(15), qt.IsFalse)
 
-	c.Assert(cache.len(), qt.Equals, 0)
+	c.Assert(cache.Len(), qt.Equals, 0)
 
 	c.Assert(func() { New[int, any](Options[int, any]{MaxEntries: -1}) }, qt.PanicMatches, "must provide a positive size")
 }
@@ -68,7 +68,7 @@ func TestDeleteFunc(t *testing.T) {
 		c.Assert(cache.DeleteFunc(func(key int, value any) bool {
 			return key%2 == 0
 		}), qt.Equals, 5)
-		c.Assert(cache.len(), qt.Equals, 5)
+		c.Assert(cache.Len(), qt.Equals, 5)
 	})
 
 	c.Run("Temporary", func(c *qt.C) {
