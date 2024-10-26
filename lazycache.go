@@ -1,6 +1,7 @@
 package lazycache
 
 import (
+	"fmt"
 	"sync"
 
 	"github.com/hashicorp/golang-lru/v2/simplelru"
@@ -121,19 +122,28 @@ func (c *Cache[K, V]) GetOrCreate(key K, create func(key K) (V, error)) (V, bool
 	c.lru.Add(key, w)
 	c.mu.Unlock()
 
-	// Create the  value with the lock released.
-	v, err := create(key)
-	w.err = err
-	w.value = v
-	w.found = err == nil
+	v, err := func() (v V, err error) {
+		defer func() {
+			if r := recover(); r != nil {
+				err = fmt.Errorf("panic: %v", r)
+			}
+			w.err = err
+			w.value = v
+			w.found = err == nil
+			close(w.ready)
 
-	close(w.ready)
+			if err != nil {
+				v = c.zerov
+				c.Delete(key)
+			}
+		}()
+		// Create the  value with the lock released.
+		v, err = create(key)
 
-	if err != nil {
-		c.Delete(key)
-		return c.zerov, false, err
-	}
-	return v, false, nil
+		return
+	}()
+
+	return v, false, err
 }
 
 // Resize changes the cache size and returns the number of entries evicted.

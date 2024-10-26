@@ -57,6 +57,24 @@ func TestCache(t *testing.T) {
 	c.Assert(func() { New[int, any](Options[int, any]{MaxEntries: -1}) }, qt.PanicMatches, "must provide a positive size")
 }
 
+func TestPanic(t *testing.T) {
+	c := qt.New(t)
+
+	cache := New(Options[int, any]{MaxEntries: 1000})
+	for i := 0; i < 2; i++ {
+		_, _, err := cache.GetOrCreate(42, func(key int) (any, error) {
+			panic("failed1")
+		})
+		c.Assert(err, qt.IsNotNil)
+		c.Assert(err, qt.ErrorMatches, "panic: failed1")
+		_, _, err = cache.GetOrCreate(i, func(key int) (any, error) {
+			panic("failed2")
+		})
+		c.Assert(err, qt.IsNotNil)
+		c.Assert(err, qt.ErrorMatches, "panic: failed2")
+	}
+}
+
 func TestDeleteFunc(t *testing.T) {
 	c := qt.New(t)
 
