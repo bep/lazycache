@@ -61,17 +61,29 @@ func TestPanic(t *testing.T) {
 	c := qt.New(t)
 
 	cache := New(Options[int, any]{MaxEntries: 1000})
+	ep := &errorProducer{}
+
+	willPanic := func(i int) func() {
+		return func() {
+			cache.GetOrCreate(i, func(key int) (any, error) {
+				ep.Panic(i)
+				return nil, nil
+			})
+		}
+	}
+
 	for i := 0; i < 2; i++ {
-		_, _, err := cache.GetOrCreate(42, func(key int) (any, error) {
-			panic("failed1")
+		for j := 0; j < 2; j++ {
+			c.Assert(willPanic(i), qt.PanicMatches, fmt.Sprintf("failed-%d", i))
+		}
+	}
+
+	for i := 0; i < 2; i++ {
+		v, _, err := cache.GetOrCreate(i, func(key int) (any, error) {
+			return key + 2, nil
 		})
-		c.Assert(err, qt.IsNotNil)
-		c.Assert(err, qt.ErrorMatches, "panic: failed1")
-		_, _, err = cache.GetOrCreate(i, func(key int) (any, error) {
-			panic("failed2")
-		})
-		c.Assert(err, qt.IsNotNil)
-		c.Assert(err, qt.ErrorMatches, "panic: failed2")
+		c.Assert(err, qt.IsNil)
+		c.Assert(v, qt.Equals, i+2)
 	}
 }
 
@@ -460,4 +472,10 @@ func BenchmarkCacheParallel(b *testing.B) {
 			}
 		})
 	})
+}
+
+type errorProducer struct{}
+
+func (e *errorProducer) Panic(i int) {
+	panic(fmt.Sprintf("failed-%d", i))
 }

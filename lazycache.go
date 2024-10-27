@@ -1,7 +1,6 @@
 package lazycache
 
 import (
-	"fmt"
 	"sync"
 
 	"github.com/hashicorp/golang-lru/v2/simplelru"
@@ -122,23 +121,24 @@ func (c *Cache[K, V]) GetOrCreate(key K, create func(key K) (V, error)) (V, bool
 	c.lru.Add(key, w)
 	c.mu.Unlock()
 
+	isPanic := true
+
 	v, err := func() (v V, err error) {
 		defer func() {
-			if r := recover(); r != nil {
-				err = fmt.Errorf("panic: %v", r)
-			}
 			w.err = err
 			w.value = v
-			w.found = err == nil
+			w.found = err == nil && !isPanic
 			close(w.ready)
 
-			if err != nil {
+			if err != nil || isPanic {
 				v = c.zerov
 				c.Delete(key)
 			}
 		}()
+
 		// Create the  value with the lock released.
 		v, err = create(key)
+		isPanic = false
 
 		return
 	}()
