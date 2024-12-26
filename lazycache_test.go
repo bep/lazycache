@@ -233,9 +233,13 @@ func TestGetOrCreateConcurrent(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			for j := 0; j < 12; j++ {
+				countersmu.Lock()
+				_, created := counters[i]
+				countersmu.Unlock()
 				res, found := cache.Get(i)
-				// The value may be nil if if GetOrCreate has not been called for i yet.
-				if found {
+				if !found {
+					c.Assert(created, qt.IsFalse)
+				} else {
 					c.Assert(res, qt.Equals, expect)
 				}
 			}
