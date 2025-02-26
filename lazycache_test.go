@@ -33,7 +33,7 @@ func TestCache(t *testing.T) {
 	cache.Set(123456, 32)
 	c.Assert(get(123456), qt.Equals, 32)
 
-	for i := 0; i < 20; i++ {
+	for i := range 20 {
 		cache.Set(i, i)
 	}
 	c.Assert(get(123456), qt.IsNil)
@@ -75,13 +75,13 @@ func TestPanic(t *testing.T) {
 		}
 	}
 
-	for i := 0; i < 2; i++ {
-		for j := 0; j < 2; j++ {
+	for i := range 2 {
+		for range 2 {
 			c.Assert(willPanic(i), qt.PanicMatches, fmt.Sprintf("failed-%d", i))
 		}
 	}
 
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		v, _, err := cache.GetOrCreate(i, func(key int) (any, error) {
 			return key + 2, nil
 		})
@@ -95,7 +95,7 @@ func TestDeleteFunc(t *testing.T) {
 
 	c.Run("Basic", func(c *qt.C) {
 		cache := New(Options[int, any]{MaxEntries: 1000})
-		for i := 0; i < 10; i++ {
+		for i := range 10 {
 			cache.Set(i, i)
 		}
 		c.Assert(cache.DeleteFunc(func(key int, value any) bool {
@@ -109,9 +109,9 @@ func TestDeleteFunc(t *testing.T) {
 
 		// There's some timing involved in this test, so we'll need
 		// to retry a few times to cover all the cases.
-		for i := 0; i < 100; i++ {
+		for range 100 {
 			cache := New(Options[int, any]{MaxEntries: 1000})
-			for i := 0; i < 10; i++ {
+			for i := range 10 {
 				cache.Set(i, i)
 			}
 			wg.Add(1)
@@ -153,7 +153,7 @@ func TestGetOrCreate(t *testing.T) {
 		counter++
 		return fmt.Sprintf("value-%d-%d", key, counter), nil
 	}
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		res, found, err := cache.GetOrCreate(123456, create)
 		c.Assert(err, qt.IsNil)
 		c.Assert(res, qt.Equals, "value-123456-1")
@@ -187,7 +187,7 @@ func TestOnEvict(t *testing.T) {
 		return key, nil
 	}
 
-	for i := 0; i < 25; i++ {
+	for i := range 25 {
 		cache.GetOrCreate(i, create)
 	}
 
@@ -212,13 +212,13 @@ func TestGetOrCreateConcurrent(t *testing.T) {
 
 	var wg sync.WaitGroup
 
-	for i := 0; i < 20; i++ {
+	for i := range 20 {
 		i := i
 		expect := fmt.Sprintf("%d-0", i)
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			for j := 0; j < 12; j++ {
+			for range 12 {
 				res, _, err := cache.GetOrCreate(i, create)
 				c.Assert(err, qt.IsNil)
 				c.Assert(res, qt.Equals, expect)
@@ -226,13 +226,13 @@ func TestGetOrCreateConcurrent(t *testing.T) {
 		}()
 	}
 
-	for i := 0; i < 20; i++ {
+	for i := range 20 {
 		i := i
 		expect := fmt.Sprintf("%d-0", i)
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			for j := 0; j < 12; j++ {
+			for range 12 {
 				countersmu.Lock()
 				_, created := counters[i]
 				countersmu.Unlock()
@@ -263,12 +263,12 @@ func TestGetOrCreateAndResizeConcurrent(t *testing.T) {
 
 	var wg sync.WaitGroup
 
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		i := i
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			for j := 0; j < 12; j++ {
+			for range 12 {
 				v, _, err := cache.GetOrCreate(i, create)
 				c.Assert(err, qt.IsNil)
 				c.Assert(v, qt.Not(qt.Equals), 0)
@@ -295,14 +295,14 @@ func TestGetOrCreateRecursive(t *testing.T) {
 
 	n := 200
 
-	for i := 0; i < 30; i++ {
+	for range 30 {
 		cache := New(Options[int, any]{MaxEntries: 1000})
 
-		for j := 0; j < 10; j++ {
+		for range 10 {
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				for k := 0; k < 10; k++ {
+				for range 10 {
 					// This test was added to test a deadlock situation with nested GetOrCreate calls on the same cache.
 					// Note that the keys below are carefully selected to not overlap, as this case may still deadlock:
 					// goroutine 1: GetOrCreate(1) => GetOrCreate(2)
@@ -345,7 +345,7 @@ func BenchmarkGetOrCreateAndGet(b *testing.B) {
 	r := rand.New(rand.NewSource(99))
 	var mu sync.Mutex
 	// Partially fill the cache.
-	for i := 0; i < maxSize/2; i++ {
+	for i := range maxSize / 2 {
 		cache.Set(i, i)
 	}
 	b.ResetTimer()
@@ -389,7 +389,7 @@ func BenchmarkGetOrCreate(b *testing.B) {
 	cache := New(Options[int, any]{MaxEntries: maxSize})
 
 	// Partially fill the cache.
-	for i := 0; i < maxSize/3; i++ {
+	for i := range maxSize / 3 {
 		cache.Set(i, i)
 	}
 	b.ResetTimer()
@@ -431,7 +431,7 @@ func BenchmarkCacheSerial(b *testing.B) {
 	b.Run("Get", func(b *testing.B) {
 		cache := New(Options[int, any]{MaxEntries: maxSize})
 		numItems := maxSize - 200
-		for i := 0; i < numItems; i++ {
+		for i := range numItems {
 			cache.Set(i, i)
 		}
 		b.ResetTimer()
@@ -464,7 +464,7 @@ func BenchmarkCacheParallel(b *testing.B) {
 		r := rand.New(rand.NewSource(99))
 		var mu sync.Mutex
 		numItems := maxSize - 200
-		for i := 0; i < numItems; i++ {
+		for i := range numItems {
 			cache.Set(i, i)
 		}
 		b.RunParallel(func(pb *testing.PB) {
