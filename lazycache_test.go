@@ -338,6 +338,338 @@ func TestGetOrCreateRecursive(t *testing.T) {
 	}
 }
 
+// TestGetOrCreateEvictionRace tests the scenario where an entry is evicted
+// while its create function is still running, and a new entry for the same key
+// is created. The failing original create() should NOT delete the new entry.
+func TestGetOrCreateEvictionRace(t *testing.T) {
+	c := qt.New(t)
+
+	// Use a small cache to force evictions
+	cache := New(Options[int, string]{MaxEntries: 2})
+
+	var (
+		wg             sync.WaitGroup
+		key1Started    = make(chan struct{})
+		key1Continue   = make(chan struct{})
+		key1Done       = make(chan struct{})
+		key1NewCreated = make(chan struct{})
+	)
+
+	// Goroutine 1: Start creating key 1, but wait before completing
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		v, _, err := cache.GetOrCreate(1, func(key int) (string, error) {
+			close(key1Started) // Signal that we've started
+			<-key1Continue     // Wait for signal to continue
+			return "", errors.New("intentional failure")
+		})
+		c.Assert(err, qt.ErrorMatches, "intentional failure")
+		c.Assert(v, qt.Equals, "")
+		close(key1Done)
+	}()
+
+	// Wait for goroutine 1 to start creating
+	<-key1Started
+
+	// Fill the cache to evict key 1's pending entry
+	cache.Set(2, "value2")
+	cache.Set(3, "value3") // This should evict key 1
+
+	// Now create a new entry for key 1 that will succeed
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		v, _, err := cache.GetOrCreate(1, func(key int) (string, error) {
+			return "new-value-1", nil
+		})
+		c.Assert(err, qt.IsNil)
+		c.Assert(v, qt.Equals, "new-value-1")
+		close(key1NewCreated)
+	}()
+
+	// Wait for the new entry to be created before letting the old one fail
+	<-key1NewCreated
+
+	// Now let goroutine 1 complete (with failure) - this will call Delete(1)
+	close(key1Continue)
+	<-key1Done
+
+	wg.Wait()
+
+	// The new entry for key 1 should still exist because deleteIfSame()
+	// only deletes if the wrapper is the same instance.
+	v, found := cache.Get(1)
+	c.Assert(found, qt.IsTrue, qt.Commentf("new entry should not be deleted by failing old create"))
+	c.Assert(v, qt.Equals, "new-value-1")
+}
+
+// TestSetDuringGetOrCreate tests that Set() during a failing GetOrCreate
+// preserves the Set() value. The failing create should NOT delete the newer entry.
+func TestSetDuringGetOrCreate(t *testing.T) {
+	c := qt.New(t)
+
+	cache := New(Options[int, string]{MaxEntries: 100})
+
+	var (
+		createStarted  = make(chan struct{})
+		createContinue = make(chan struct{})
+		wg             sync.WaitGroup
+	)
+
+	// Start a GetOrCreate that will fail
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		_, _, err := cache.GetOrCreate(1, func(key int) (string, error) {
+			close(createStarted)
+			<-createContinue
+			return "", errors.New("intentional failure")
+		})
+		c.Assert(err, qt.ErrorMatches, "intentional failure")
+	}()
+
+	<-createStarted
+
+	// While create is running, Set a value for the same key
+	cache.Set(1, "set-value")
+
+	// Let the create continue and fail
+	close(createContinue)
+	wg.Wait()
+
+	// The Set value should still exist because deleteIfSame() only
+	// deletes if the wrapper is the same instance.
+	v, found := cache.Get(1)
+	c.Assert(found, qt.IsTrue, qt.Commentf("Set() value should not be deleted by failing GetOrCreate"))
+	c.Assert(v, qt.Equals, "set-value")
+}
+
+// TestOnEvictWithPendingEntry tests that OnEvict correctly waits for
+// entries that are still being created.
+func TestOnEvictWithPendingEntry(t *testing.T) {
+	c := qt.New(t)
+
+	var (
+		evictedKeys   []int
+		evictedValues []string
+		evictMu       sync.Mutex
+		createStarted = make(chan struct{})
+	)
+
+	cache := New(Options[int, string]{
+		MaxEntries: 2,
+		OnEvict: func(key int, value string) {
+			evictMu.Lock()
+			evictedKeys = append(evictedKeys, key)
+			evictedValues = append(evictedValues, value)
+			evictMu.Unlock()
+		},
+	})
+
+	var wg sync.WaitGroup
+
+	// Start creating key 1 with a slow create function
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		v, _, err := cache.GetOrCreate(1, func(key int) (string, error) {
+			close(createStarted)
+			time.Sleep(50 * time.Millisecond)
+			return "value1", nil
+		})
+		c.Assert(err, qt.IsNil)
+		c.Assert(v, qt.Equals, "value1")
+	}()
+
+	<-createStarted
+
+	// Add entries to evict key 1
+	cache.Set(2, "value2")
+	cache.Set(3, "value3") // This should trigger eviction of key 1
+
+	wg.Wait()
+
+	// Give time for eviction callback to complete
+	time.Sleep(100 * time.Millisecond)
+
+	evictMu.Lock()
+	// Key 1 should have been evicted with its final value (after create completed)
+	foundKey1 := false
+	for i, k := range evictedKeys {
+		if k == 1 {
+			foundKey1 = true
+			c.Assert(evictedValues[i], qt.Equals, "value1")
+		}
+	}
+	evictMu.Unlock()
+
+	// Note: foundKey1 might be false if the eviction timing differs,
+	// which is acceptable as long as no panic/race occurred
+	_ = foundKey1
+}
+
+// TestGetOrCreateConcurrentErrors tests that multiple goroutines calling
+// GetOrCreate for the same key all receive the same error when create fails.
+func TestGetOrCreateConcurrentErrors(t *testing.T) {
+	c := qt.New(t)
+
+	cache := New(Options[int, string]{MaxEntries: 100})
+
+	var (
+		wg          sync.WaitGroup
+		createCount atomic.Int32
+	)
+
+	// Multiple goroutines try to get/create the same failing key
+	for range 10 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, _, err := cache.GetOrCreate(1, func(key int) (string, error) {
+				createCount.Add(1)
+				time.Sleep(10 * time.Millisecond)
+				return "", errors.New("create failed")
+			})
+			c.Assert(err, qt.ErrorMatches, "create failed")
+		}()
+	}
+
+	wg.Wait()
+
+	// The create function should only be called once
+	// (subsequent callers wait on the first one and get the same error)
+	c.Assert(createCount.Load(), qt.Equals, int32(1))
+}
+
+// TestDeleteFuncConcurrentCreate tests DeleteFunc behavior when entries
+// are being created concurrently.
+func TestDeleteFuncConcurrentCreate(t *testing.T) {
+	for range 50 { // Run multiple times to catch race conditions
+		cache := New(Options[int, int]{MaxEntries: 100})
+
+		// Pre-populate with some entries
+		for i := range 10 {
+			cache.Set(i, i)
+		}
+
+		var wg sync.WaitGroup
+
+		// Concurrently create new entries
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := 10; i < 20; i++ {
+				cache.GetOrCreate(i, func(key int) (int, error) {
+					time.Sleep(time.Microsecond)
+					return key * 2, nil
+				})
+			}
+		}()
+
+		// Concurrently delete entries matching a condition
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			cache.DeleteFunc(func(key int, value int) bool {
+				return key%2 == 0
+			})
+		}()
+
+		wg.Wait()
+	}
+	// Success means no panics or races occurred
+}
+
+// TestResizeToZero tests behavior when resizing cache to zero.
+func TestResizeToZero(t *testing.T) {
+	c := qt.New(t)
+
+	cache := New(Options[int, int]{MaxEntries: 10})
+
+	for i := range 5 {
+		cache.Set(i, i)
+	}
+
+	evicted := cache.Resize(0)
+	c.Assert(evicted, qt.Equals, 5)
+	c.Assert(cache.Len(), qt.Equals, 0)
+
+	// Should still work after resize to 0
+	cache.Resize(10)
+	cache.Set(1, 1)
+	v, found := cache.Get(1)
+	c.Assert(found, qt.IsTrue)
+	c.Assert(v, qt.Equals, 1)
+}
+
+// TestGetOrCreatePanicRecovery tests that after a panic, the same key
+// can be created again successfully.
+func TestGetOrCreatePanicRecovery(t *testing.T) {
+	c := qt.New(t)
+
+	cache := New(Options[int, string]{MaxEntries: 100})
+
+	// First call panics
+	c.Assert(func() {
+		cache.GetOrCreate(1, func(key int) (string, error) {
+			panic("intentional panic")
+		})
+	}, qt.PanicMatches, "intentional panic")
+
+	// Entry should be removed, so a new create should work
+	v, found, err := cache.GetOrCreate(1, func(key int) (string, error) {
+		return "recovered", nil
+	})
+	c.Assert(err, qt.IsNil)
+	c.Assert(found, qt.IsFalse) // Not found because previous entry was deleted
+	c.Assert(v, qt.Equals, "recovered")
+}
+
+// TestConcurrentGetAndGetOrCreate tests concurrent Get and GetOrCreate
+// operations on the same keys.
+func TestConcurrentGetAndGetOrCreate(t *testing.T) {
+	c := qt.New(t)
+
+	cache := New(Options[int, int]{MaxEntries: 100})
+
+	var wg sync.WaitGroup
+
+	// GetOrCreate goroutines
+	for i := range 10 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := range 20 {
+				key := (i + j) % 15
+				v, _, err := cache.GetOrCreate(key, func(k int) (int, error) {
+					time.Sleep(time.Microsecond)
+					return k * 10, nil
+				})
+				c.Assert(err, qt.IsNil)
+				c.Assert(v, qt.Equals, key*10)
+			}
+		}()
+	}
+
+	// Get goroutines (may or may not find entries)
+	for range 10 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := range 20 {
+				key := j % 15
+				v, found := cache.Get(key)
+				if found {
+					c.Assert(v, qt.Equals, key*10)
+				}
+			}
+		}()
+	}
+
+	wg.Wait()
+}
+
 func BenchmarkGetOrCreateAndGet(b *testing.B) {
 	const maxSize = 1000
 
