@@ -135,11 +135,14 @@ func (c *Cache[K, V]) GetOrCreate(key K, create func(key K) (V, error)) (V, bool
 
 			if err != nil || isPanic {
 				v = c.zerov
-				c.Delete(key)
+				// Only delete if this wrapper is still the one in the cache.
+				// Another goroutine may have replaced it via Set() or GetOrCreate()
+				// if our entry was evicted while create() was running.
+				c.deleteIfSame(key, w)
 			}
 		}()
 
-		// Create the  value with the lock released.
+		// Create the value with the lock released.
 		v, err = create(key)
 		isPanic = false
 
@@ -170,6 +173,17 @@ func (c *Cache[K, V]) get(key K) *valueWrapper[V] {
 		return nil
 	}
 	return w
+}
+
+// deleteIfSame removes the entry for key only if it's still the same wrapper.
+// This prevents a failing GetOrCreate from deleting a newer entry that was
+// created by another goroutine (via Set or GetOrCreate) after eviction.
+func (c *Cache[K, V]) deleteIfSame(key K, w *valueWrapper[V]) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if current, ok := c.lru.Peek(key); ok && current == w {
+		c.lru.Remove(key)
+	}
 }
 
 // contains returns true if the given key is in the cache.
