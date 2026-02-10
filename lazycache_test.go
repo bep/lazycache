@@ -213,7 +213,6 @@ func TestGetOrCreateConcurrent(t *testing.T) {
 	var wg sync.WaitGroup
 
 	for i := range 20 {
-		i := i
 		expect := fmt.Sprintf("%d-0", i)
 		wg.Add(1)
 		go func() {
@@ -227,7 +226,6 @@ func TestGetOrCreateConcurrent(t *testing.T) {
 	}
 
 	for i := range 20 {
-		i := i
 		expect := fmt.Sprintf("%d-0", i)
 		wg.Add(1)
 		go func() {
@@ -264,7 +262,6 @@ func TestGetOrCreateAndResizeConcurrent(t *testing.T) {
 	var wg sync.WaitGroup
 
 	for i := range 100 {
-		i := i
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
