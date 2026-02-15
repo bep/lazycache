@@ -114,9 +114,7 @@ func TestDeleteFunc(t *testing.T) {
 			for i := range 10 {
 				cache.Set(i, i)
 			}
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
+			wg.Go(func() {
 				for i := 10; i < 30; i++ {
 					v, _, err := cache.GetOrCreate(i, func(key int) (any, error) {
 						if key%2 == 0 {
@@ -133,7 +131,7 @@ func TestDeleteFunc(t *testing.T) {
 					}
 
 				}
-			}()
+			})
 			time.Sleep(3 * time.Microsecond)
 			c.Assert(cache.DeleteFunc(func(key int, value any) bool {
 				return key%2 == 0
@@ -214,22 +212,18 @@ func TestGetOrCreateConcurrent(t *testing.T) {
 
 	for i := range 20 {
 		expect := fmt.Sprintf("%d-0", i)
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			for range 12 {
 				res, _, err := cache.GetOrCreate(i, create)
 				c.Assert(err, qt.IsNil)
 				c.Assert(res, qt.Equals, expect)
 			}
-		}()
+		})
 	}
 
 	for i := range 20 {
 		expect := fmt.Sprintf("%d-0", i)
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			for range 12 {
 				countersmu.Lock()
 				_, created := counters[i]
@@ -241,7 +235,7 @@ func TestGetOrCreateConcurrent(t *testing.T) {
 					c.Assert(res, qt.Equals, expect)
 				}
 			}
-		}()
+		})
 	}
 
 	wg.Wait()
@@ -262,25 +256,21 @@ func TestGetOrCreateAndResizeConcurrent(t *testing.T) {
 	var wg sync.WaitGroup
 
 	for i := range 100 {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			for range 12 {
 				v, _, err := cache.GetOrCreate(i, create)
 				c.Assert(err, qt.IsNil)
 				c.Assert(v, qt.Not(qt.Equals), 0)
 			}
-		}()
+		})
 	}
 
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		for i := 100; i >= 0; i-- {
 			cache.Resize(i)
 			time.Sleep(10 * time.Millisecond)
 		}
-	}()
+	})
 
 	wg.Wait()
 }
@@ -296,9 +286,7 @@ func TestGetOrCreateRecursive(t *testing.T) {
 		cache := New(Options[int, any]{MaxEntries: 1000})
 
 		for range 10 {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
+			wg.Go(func() {
 				for range 10 {
 					// This test was added to test a deadlock situation with nested GetOrCreate calls on the same cache.
 					// Note that the keys below are carefully selected to not overlap, as this case may still deadlock:
@@ -328,7 +316,7 @@ func TestGetOrCreateRecursive(t *testing.T) {
 						c.Assert(v, qt.Equals, "inner")
 					}
 				}
-			}()
+			})
 
 		}
 		wg.Wait()
@@ -353,9 +341,7 @@ func TestGetOrCreateEvictionRace(t *testing.T) {
 	)
 
 	// Goroutine 1: Start creating key 1, but wait before completing
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		v, _, err := cache.GetOrCreate(1, func(key int) (string, error) {
 			close(key1Started) // Signal that we've started
 			<-key1Continue     // Wait for signal to continue
@@ -364,7 +350,7 @@ func TestGetOrCreateEvictionRace(t *testing.T) {
 		c.Assert(err, qt.ErrorMatches, "intentional failure")
 		c.Assert(v, qt.Equals, "")
 		close(key1Done)
-	}()
+	})
 
 	// Wait for goroutine 1 to start creating
 	<-key1Started
@@ -374,16 +360,14 @@ func TestGetOrCreateEvictionRace(t *testing.T) {
 	cache.Set(3, "value3") // This should evict key 1
 
 	// Now create a new entry for key 1 that will succeed
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		v, _, err := cache.GetOrCreate(1, func(key int) (string, error) {
 			return "new-value-1", nil
 		})
 		c.Assert(err, qt.IsNil)
 		c.Assert(v, qt.Equals, "new-value-1")
 		close(key1NewCreated)
-	}()
+	})
 
 	// Wait for the new entry to be created before letting the old one fail
 	<-key1NewCreated
@@ -415,16 +399,14 @@ func TestSetDuringGetOrCreate(t *testing.T) {
 	)
 
 	// Start a GetOrCreate that will fail
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		_, _, err := cache.GetOrCreate(1, func(key int) (string, error) {
 			close(createStarted)
 			<-createContinue
 			return "", errors.New("intentional failure")
 		})
 		c.Assert(err, qt.ErrorMatches, "intentional failure")
-	}()
+	})
 
 	<-createStarted
 
@@ -467,9 +449,7 @@ func TestOnEvictWithPendingEntry(t *testing.T) {
 	var wg sync.WaitGroup
 
 	// Start creating key 1 with a slow create function
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		v, _, err := cache.GetOrCreate(1, func(key int) (string, error) {
 			close(createStarted)
 			time.Sleep(50 * time.Millisecond)
@@ -477,7 +457,7 @@ func TestOnEvictWithPendingEntry(t *testing.T) {
 		})
 		c.Assert(err, qt.IsNil)
 		c.Assert(v, qt.Equals, "value1")
-	}()
+	})
 
 	<-createStarted
 
@@ -520,16 +500,14 @@ func TestGetOrCreateConcurrentErrors(t *testing.T) {
 
 	// Multiple goroutines try to get/create the same failing key
 	for range 10 {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			_, _, err := cache.GetOrCreate(1, func(key int) (string, error) {
 				createCount.Add(1)
 				time.Sleep(10 * time.Millisecond)
 				return "", errors.New("create failed")
 			})
 			c.Assert(err, qt.ErrorMatches, "create failed")
-		}()
+		})
 	}
 
 	wg.Wait()
@@ -553,25 +531,21 @@ func TestDeleteFuncConcurrentCreate(t *testing.T) {
 		var wg sync.WaitGroup
 
 		// Concurrently create new entries
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			for i := 10; i < 20; i++ {
 				cache.GetOrCreate(i, func(key int) (int, error) {
 					time.Sleep(time.Microsecond)
 					return key * 2, nil
 				})
 			}
-		}()
+		})
 
 		// Concurrently delete entries matching a condition
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			cache.DeleteFunc(func(key int, value int) bool {
 				return key%2 == 0
 			})
-		}()
+		})
 
 		wg.Wait()
 	}
@@ -634,9 +608,7 @@ func TestConcurrentGetAndGetOrCreate(t *testing.T) {
 
 	// GetOrCreate goroutines
 	for i := range 10 {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			for j := range 20 {
 				key := (i + j) % 15
 				v, _, err := cache.GetOrCreate(key, func(k int) (int, error) {
@@ -646,14 +618,12 @@ func TestConcurrentGetAndGetOrCreate(t *testing.T) {
 				c.Assert(err, qt.IsNil)
 				c.Assert(v, qt.Equals, key*10)
 			}
-		}()
+		})
 	}
 
 	// Get goroutines (may or may not find entries)
 	for range 10 {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			for j := range 20 {
 				key := j % 15
 				v, found := cache.Get(key)
@@ -661,7 +631,7 @@ func TestConcurrentGetAndGetOrCreate(t *testing.T) {
 					c.Assert(v, qt.Equals, key*10)
 				}
 			}
-		}()
+		})
 	}
 
 	wg.Wait()
