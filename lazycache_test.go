@@ -10,6 +10,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	qt "github.com/frankban/quicktest"
@@ -427,94 +428,89 @@ func TestSetDuringGetOrCreate(t *testing.T) {
 // TestOnEvictWithPendingEntry tests that OnEvict correctly waits for
 // entries that are still being created.
 func TestOnEvictWithPendingEntry(t *testing.T) {
-	c := qt.New(t)
+	synctest.Test(t, func(t *testing.T) {
+		c := qt.New(t)
 
-	var (
-		evictedKeys   []int
-		evictedValues []string
-		evictMu       sync.Mutex
-		createStarted = make(chan struct{})
-	)
+		var (
+			evictedKeys   []int
+			evictedValues []string
+			createStarted = make(chan struct{})
+		)
 
-	cache := New(Options[int, string]{
-		MaxEntries: 2,
-		OnEvict: func(key int, value string) {
-			evictMu.Lock()
-			evictedKeys = append(evictedKeys, key)
-			evictedValues = append(evictedValues, value)
-			evictMu.Unlock()
-		},
-	})
-
-	var wg sync.WaitGroup
-
-	// Start creating key 1 with a slow create function
-	wg.Go(func() {
-		v, _, err := cache.GetOrCreate(1, func(key int) (string, error) {
-			close(createStarted)
-			time.Sleep(50 * time.Millisecond)
-			return "value1", nil
+		cache := New(Options[int, string]{
+			MaxEntries: 2,
+			OnEvict: func(key int, value string) {
+				evictedKeys = append(evictedKeys, key)
+				evictedValues = append(evictedValues, value)
+			},
 		})
-		c.Assert(err, qt.IsNil)
-		c.Assert(v, qt.Equals, "value1")
-	})
 
-	<-createStarted
+		var wg sync.WaitGroup
 
-	// Add entries to evict key 1
-	cache.Set(2, "value2")
-	cache.Set(3, "value3") // This should trigger eviction of key 1
+		// Start creating key 1 with a slow create function
+		wg.Go(func() {
+			v, _, err := cache.GetOrCreate(1, func(key int) (string, error) {
+				close(createStarted)
+				time.Sleep(50 * time.Millisecond)
+				return "value1", nil
+			})
+			c.Assert(err, qt.IsNil)
+			c.Assert(v, qt.Equals, "value1")
+		})
 
-	wg.Wait()
+		<-createStarted
 
-	// Give time for eviction callback to complete
-	time.Sleep(100 * time.Millisecond)
+		// Add entries to evict key 1. Set(3) triggers synchronous eviction of
+		// key 1, which calls value.wait() on the pending wrapper; the bubble's
+		// fake clock advances the 50ms create sleep so the eviction completes
+		// with the final value.
+		cache.Set(2, "value2")
+		cache.Set(3, "value3")
 
-	evictMu.Lock()
-	// Key 1 should have been evicted with its final value (after create completed)
-	foundKey1 := false
-	for i, k := range evictedKeys {
-		if k == 1 {
-			foundKey1 = true
-			c.Assert(evictedValues[i], qt.Equals, "value1")
+		wg.Wait()
+
+		foundKey1 := false
+		for i, k := range evictedKeys {
+			if k == 1 {
+				foundKey1 = true
+				c.Assert(evictedValues[i], qt.Equals, "value1")
+			}
 		}
-	}
-	evictMu.Unlock()
-
-	// Note: foundKey1 might be false if the eviction timing differs,
-	// which is acceptable as long as no panic/race occurred
-	_ = foundKey1
+		c.Assert(foundKey1, qt.IsTrue)
+	})
 }
 
 // TestGetOrCreateConcurrentErrors tests that multiple goroutines calling
 // GetOrCreate for the same key all receive the same error when create fails.
 func TestGetOrCreateConcurrentErrors(t *testing.T) {
-	c := qt.New(t)
+	synctest.Test(t, func(t *testing.T) {
+		c := qt.New(t)
 
-	cache := New(Options[int, string]{MaxEntries: 100})
+		cache := New(Options[int, string]{MaxEntries: 100})
 
-	var (
-		wg          sync.WaitGroup
-		createCount atomic.Int32
-	)
+		var (
+			wg          sync.WaitGroup
+			createCount atomic.Int32
+		)
 
-	// Multiple goroutines try to get/create the same failing key
-	for range 10 {
-		wg.Go(func() {
-			_, _, err := cache.GetOrCreate(1, func(key int) (string, error) {
-				createCount.Add(1)
-				time.Sleep(10 * time.Millisecond)
-				return "", errors.New("create failed")
+		// Multiple goroutines try to get/create the same failing key
+		for range 10 {
+			wg.Go(func() {
+				_, _, err := cache.GetOrCreate(1, func(key int) (string, error) {
+					createCount.Add(1)
+					time.Sleep(10 * time.Millisecond)
+					return "", errors.New("create failed")
+				})
+				c.Assert(err, qt.ErrorMatches, "create failed")
 			})
-			c.Assert(err, qt.ErrorMatches, "create failed")
-		})
-	}
+		}
 
-	wg.Wait()
+		wg.Wait()
 
-	// The create function should only be called once
-	// (subsequent callers wait on the first one and get the same error)
-	c.Assert(createCount.Load(), qt.Equals, int32(1))
+		// The create function should only be called once
+		// (subsequent callers wait on the first one and get the same error)
+		c.Assert(createCount.Load(), qt.Equals, int32(1))
+	})
 }
 
 // TestDeleteFuncConcurrentCreate tests DeleteFunc behavior when entries
