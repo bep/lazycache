@@ -745,10 +745,10 @@ func BenchmarkCacheParallel(b *testing.B) {
 
 	b.Run("Set", func(b *testing.B) {
 		cache := New(Options[int, any]{MaxEntries: maxSize})
-		var counter uint32
+		var counter atomic.Uint32
 		b.RunParallel(func(pb *testing.PB) {
 			for pb.Next() {
-				i := int(atomic.AddUint32(&counter, 1))
+				i := int(counter.Add(1))
 				cache.Set(i, i)
 			}
 		})
